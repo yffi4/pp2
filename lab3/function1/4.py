@@ -14,7 +14,7 @@ def filter_prime(numbers):
     return prime_list
 
 
-lst = [1, 3, 5, 14, 23, 21, 45, 2]
+lst = list(map(int, input().split()))
 primes = filter_prime(lst)
 print(primes)
 
