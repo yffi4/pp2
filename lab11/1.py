@@ -1,86 +1,117 @@
-import psycopg2
+import psycopg2, re
 
-# Function to connect to the database
-def connect_to_database():
-    try:
-        conn = psycopg2.connect(
-            database="phonebook1",
-            user="postgres",
-            host="localhost",
-            password="15103016",
-            port=5432
-        )
-        print("Connected to the database")
-        return conn
-    except psycopg2.Error as e:
-        print("Error connecting to the database:", e)
-        return None
+conn = psycopg2.connect(
+    host='localhost',
+    database='phonebook1',
+    user='postgres',
+    password='15103016',
+    port=5432
+)
 
-# Procedure to insert or update user
-def insert_or_update_user(conn, full_name, phone_number):
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO phonebook1_list (full_name, phone_number) 
-            VALUES (%s, %s)
-            ON CONFLICT (full_name) 
-            DO UPDATE SET phone_number = EXCLUDED.phone_number;
-        """, (full_name, phone_number))
-        conn.commit()
-        print("User inserted or updated successfully")
-    except psycopg2.Error as e:
-        print("Error inserting or updating user:", e)
+cur = conn.cursor()
 
-# Procedure to delete data from tables by username or phone
-def delete_data(conn, pattern):
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            DELETE FROM phonebook1_list
-            WHERE full_name LIKE %s
-            OR phone_number LIKE %s;
-        """, (f'%{pattern}%', f'%{pattern}%'))
-        conn.commit()
-        print("Data deleted successfully")
-    except psycopg2.Error as e:
-        print("Error deleting data:", e)
+cur.execute(
+    '''CREATE OR REPLACE FUNCTION search_from_book(a VARCHAR)
+      RETURNS SETOF phonebook1_list
+   AS
+   $$
+      SELECT * FROM phonebook1_list WHERE full_name = a;
+   $$
+   language sql;
+   '''
+)
 
-# Function to search for records based on a pattern
-def search_records(conn, pattern):
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT * FROM phonebook1_list 
-            WHERE full_name LIKE %s 
-            OR phone_number LIKE %s;
-        """, (f'%{pattern}%', f'%{pattern}%'))
-        rows = cur.fetchall()
-        for row in rows:
-            print(row)
-        print("Search completed successfully")
-    except psycopg2.Error as e:
-        print("Error searching records:", e)
+cur.execute(
+    '''CREATE OR REPLACE PROCEDURE insert_list_of_users(
+   IN users TEXT[][]
+ )
 
-# Main function
-def main():
-    # Connect to the database
-    conn = connect_to_database()
-    if conn is None:
-        return
+ LANGUAGE plpgsql
 
-    # Insert or update user
-    insert_or_update_user(conn, "Linus Torvalds", "+77777777777")
+ AS $$
 
-    # Search for records
-    search_records(conn, "Linus")
+ DECLARE
+   i TEXT[];
 
-    # Delete data by username or phone
-    delete_data(conn, "Linus")
+ BEGIN 
 
-    # Close the database connection
-    conn.close()
-    print("Connection to the database closed")
+    Foreach i slice 1 in array users
+    LOOP
+       INSERT INTO phonebook1_list (full_name, phone_number) VALUES (i[1], i[2]);
+    END LOOP;
 
-# Execute the main function
-if __name__ == "__main__":
-    main()
+ END
+ $$;
+ '''
+)
+
+cur.execute(
+    '''CREATE OR REPLACE PROCEDURE insert_to_book(nm VARCHAR, phon VARCHAR)
+       LANGUAGE plpgsql
+       AS $$
+       DECLARE 
+          cnt INTEGER;
+       BEGIN
+          SELECT INTO cnt (SELECT count(*) FROM phonebook1_list WHERE full_name = nm);
+          IF cnt > 0 THEN
+             UPDATE phonebook1_list
+                SET phone_number = phon
+                WHERE full_name = nm;
+          ELSE
+             INSERT INTO phonebook1_list(full_name, phone_number) VALUES (nm, phon);
+             END IF;
+       END;
+       $$;''')
+
+cur.execute("""CREATE OR REPLACE PROCEDURE delete_from_book(nm VARCHAR)
+LANGUAGE plpgsql
+AS $$
+DECLARE cnt INTEGER;
+BEGIN
+    SELECT into cnt (SELECT count(*) FROM phonebook1_list WHERE full_name = nm);
+  IF cnt IS NOT NULL THEN
+        DELETE FROM phonebook1_list
+    WHERE name=nm;
+    END IF;
+END;
+$$;""")
+
+cur.execute("""CREATE OR REPLACE FUNCTION paginatingfrom(a integer, b integer)
+RETURNS SETOF phonebook1_list
+AS $$
+   SELECT * FROM phonebook1_list
+  ORDER BY full_name
+  LIMIT a OFFSET b;
+$$
+language sql;""")
+
+a = input()
+if a == 'search':
+    print("Введите имя:")
+    name = input()
+    cur.execute(f"SELECT search_from_book((\'{name}\'))")
+    result = cur.fetchall()
+    print(result[0])
+if a == 'insert':
+    print("Введите имя:")
+    name = input()
+    print("Введите номер телефона:")
+    phone = input()
+    cur.execute(f"CALL insert_to_book((\'{name}\'),(\'{phone}\'))")
+if a == 'insertloop':
+    cur.execute('''CALL insert_list_of_users(ARRAY[
+    ARRAY['Danabek', '87076052769'],
+    ARRAY['Kayirzhan', '87079815569'],
+    ARRAY['Bexultan', '87074793780']
+]);''')
+if a == 'delete':
+    name = input()
+    cur.execute(f"CALL delete_from_book (\'{name}\')")
+if a == 'paginating':
+    cur.execute(
+        '''SELECT * FROM paginatingfrom(6, 0);'''
+    )
+    print(cur.fetchall())
+conn.commit()
+cur.close()
+conn.close()
